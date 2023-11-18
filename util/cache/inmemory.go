@@ -57,13 +57,18 @@ func (i *InMemoryCache) HasSame(key string, obj interface{}) (bool, error) {
 	return bytes.Equal(buf.Bytes(), existingBuf.Bytes()), nil
 }
 
-func (i *InMemoryCache) Get(key string, obj interface{}) error {
-	bufIf, found := i.memCache.Get(key)
+func (i *InMemoryCache) Get(item *Item) error {
+	bufIf, found := i.memCache.Get(item.Key)
 	if !found {
 		return ErrCacheMiss
 	}
 	buf := bufIf.(bytes.Buffer)
-	return gob.NewDecoder(&buf).Decode(obj)
+	return gob.NewDecoder(&buf).Decode(item.Object)
+}
+
+// Returns the type for this client
+func (i *InMemoryCache) GetClientType() CacheType {
+	return CacheTypeInMemory
 }
 
 func (i *InMemoryCache) Delete(key string) error {

@@ -78,10 +78,14 @@ func (c *forwardCacheClient) Set(item *cache.Item) error {
 	})
 }
 
-func (c *forwardCacheClient) Get(key string, obj interface{}) error {
+func (c *forwardCacheClient) Get(item *cache.Item) error {
 	return c.doLazy(func(client cache.CacheClient) error {
-		return client.Get(key, obj)
+		return client.Get(item)
 	})
+}
+
+func (c *forwardCacheClient) GetClientType() cache.CacheType {
+	return c.client.GetClientType()
 }
 
 func (c *forwardCacheClient) Delete(key string) error {
