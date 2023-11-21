@@ -13,9 +13,15 @@ import (
 )
 
 func TestAddCacheFlagsToCmd(t *testing.T) {
-	cache, err := AddCacheFlagsToCmd(&cobra.Command{})()
+	cache, err := AddCacheFlagsToCmd(&cobra.Command{})(false)
 	assert.NoError(t, err)
 	assert.Equal(t, 24*time.Hour, cache.client.(*redisCache).expiration)
+}
+
+func TestAddCacheFlagsToCmdTwoLevelCache(t *testing.T) {
+	cache, err := AddCacheFlagsToCmd(&cobra.Command{})(true)
+	assert.NoError(t, err)
+	assert.Equal(t, 24*time.Hour, cache.client.(*twoLevelClient).externalCache.(*redisCache).expiration)
 }
 
 func NewInMemoryRedis() (*redis.Client, func()) {
