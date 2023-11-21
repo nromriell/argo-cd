@@ -85,7 +85,7 @@ func newCacheMocks() *repoCacheMocks {
 		ReadDelay:               0,
 		WriteDelay:              0,
 	})
-	cacheutilCache := cacheutil.NewCache(mockRepoCache.RedisClient)
+	cacheutilCache := cacheutil.NewCache(mockRepoCache.TwoLevelClient)
 	return &repoCacheMocks{
 		cacheutilCache: cacheutilCache,
 		cache:          cache.NewCache(cacheutilCache, 1*time.Minute, 1*time.Minute),
@@ -388,7 +388,8 @@ func TestGenerateManifest_RefOnlyShortCircuit(t *testing.T) {
 	assert.NoError(t, err)
 	cacheMocks.mockCache.AssertCacheCalledTimes(t, &repositorymocks.CacheCallCounts{
 		ExternalSets: 2,
-		ExternalGets: 2})
+		ExternalGets: 1,
+		InMemoryGets: 1})
 	assert.True(t, lsremoteCalled, "ls-remote should be called when the source is ref only")
 	var revisions [][2]string
 	assert.NoError(t, cacheMocks.cacheutilCache.GetItem(fmt.Sprintf("git-refs|%s", repoRemote), &revisions, nil))
@@ -459,7 +460,8 @@ func TestGenerateManifestsHelmWithRefs_CachedNoLsRemote(t *testing.T) {
 	assert.NoError(t, err)
 	cacheMocks.mockCache.AssertCacheCalledTimes(t, &repositorymocks.CacheCallCounts{
 		ExternalSets: 2,
-		ExternalGets: 5})
+		ExternalGets: 2,
+		InMemoryGets: 3})
 }
 
 // ensure we can use a semver constraint range (>= 1.0.0) and get back the correct chart (1.0.0)
@@ -3242,7 +3244,8 @@ func TestGetGitDirectories(t *testing.T) {
 	assert.ElementsMatch(t, []string{"app", "app/bar", "app/foo/bar", "somedir", "app/foo"}, directories.GetPaths())
 	cacheMocks.mockCache.AssertCacheCalledTimes(t, &repositorymocks.CacheCallCounts{
 		ExternalSets: 1,
-		ExternalGets: 2,
+		ExternalGets: 1,
+		InMemoryGets: 1,
 	})
 }
 

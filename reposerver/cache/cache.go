@@ -25,6 +25,8 @@ import (
 	"github.com/argoproj/argo-cd/v2/util/hash"
 )
 
+//go:generate go run github.com/vektra/mockery/v2@v2.37.0 --name=Cache
+
 var ErrCacheMiss = cacheutil.ErrCacheMiss
 var ErrCacheKeyLocked = cacheutil.ErrCacheKeyLocked
 
@@ -57,7 +59,7 @@ func AddCacheFlagsToCmd(cmd *cobra.Command, opts ...func(client *redis.Client)) 
 	repoFactory := cacheutil.AddCacheFlagsToCmd(cmd, opts...)
 
 	return func() (*Cache, error) {
-		cache, err := repoFactory()
+		cache, err := repoFactory(true)
 		if err != nil {
 			return nil, fmt.Errorf("error adding cache flags to cmd: %w", err)
 		}
@@ -144,7 +146,7 @@ func listApps(repoURL, revision string) string {
 
 func (c *Cache) ListApps(repoUrl, revision string) (map[string]string, error) {
 	res := make(map[string]string)
-	err := c.cache.GetItem(listApps(repoUrl, revision), &res, nil)
+	err := c.cache.GetItem(listApps(repoUrl, revision), &res, &cacheutil.CacheActionOpts{CacheType: cacheutil.CacheTypeExternal})
 	return res, err
 }
 
@@ -154,7 +156,8 @@ func (c *Cache) SetApps(repoUrl, revision string, apps map[string]string) error 
 		apps,
 		&cacheutil.CacheActionOpts{
 			Expiration: c.repoCacheExpiration,
-			Delete:     apps == nil})
+			Delete:     apps == nil,
+			CacheType:  cacheutil.CacheTypeExternal})
 }
 
 func helmIndexRefsKey(repo string) string {
@@ -209,14 +212,14 @@ func (c *Cache) TryLockGitRefCache(repo string, lockId string) error {
 	// leads to duplicate requests
 	err := c.cache.SetItem(gitRefsKey(repo), [][2]string{{cacheutil.CacheLockedValue, lockId}}, &cacheutil.CacheActionOpts{
 		Expiration:       c.revisionCacheLockTimeout,
-		DisableOverwrite: true})
+		DisableOverwrite: true,
+		CacheType:        cacheutil.CacheTypeExternal})
 	return err
 }
 
-func (c *Cache) GetGitReferences(repo string, lockId string) (lockOwner string, references *[]*plumbing.Reference, err error) {
+func (c *Cache) GetGitReferences(repo string, lockId string, cacheType cacheutil.CacheType) (lockOwner string, references *[]*plumbing.Reference, err error) {
 	var input [][2]string
-	err = c.cache.GetItem(gitRefsKey(repo), &input, &cacheutil.CacheActionOpts{Expiration: c.revisionCacheExpiration})
-	log.Errorf("Error: %v", err)
+	err = c.cache.GetItem(gitRefsKey(repo), &input, &cacheutil.CacheActionOpts{CacheType: cacheType, Expiration: c.revisionCacheExpiration})
 	if err == ErrCacheMiss {
 		// Expected
 		return "", nil, nil
@@ -246,7 +249,7 @@ func (c *Cache) GetOrLockGitReferences(repo string, references *[]*plumbing.Refe
 	// Wait only the maximum amount of time configured for the lock
 	for time.Now().Before(waitUntil) {
 		// Attempt to retrieve the key from local cache only
-		if _, cacheReferences, err := c.GetGitReferences(repo, myLockId); err != nil || cacheReferences != nil {
+		if _, cacheReferences, err := c.GetGitReferences(repo, myLockId, cacheutil.CacheTypeInMemory); err != nil || cacheReferences != nil {
 			if cacheReferences != nil {
 				*references = *cacheReferences
 			}
@@ -259,7 +262,7 @@ func (c *Cache) GetOrLockGitReferences(repo string, references *[]*plumbing.Refe
 			log.Errorf("Error attempting to acquire git references cache lock: %v", err)
 		}
 		// Attempt to retrieve the key again to see if we have the lock, or the key was populated
-		if lockOwner, cacheReferences, err := c.GetGitReferences(repo, myLockId); err != nil || cacheReferences != nil {
+		if lockOwner, cacheReferences, err := c.GetGitReferences(repo, myLockId, cacheutil.CacheTypeTwoLevel); err != nil || cacheReferences != nil {
 			if cacheReferences != nil {
 				// Someone else populated the key
 				*references = *cacheReferences
@@ -287,7 +290,7 @@ func (c *Cache) UnlockGitReferences(repo string, lockId string) error {
 		input[0][0] == cacheutil.CacheLockedValue &&
 		input[0][1] == lockId {
 		// We have the lock, so remove it
-		return c.cache.SetItem(gitRefsKey(repo), input, &cacheutil.CacheActionOpts{Delete: true})
+		return c.cache.SetItem(gitRefsKey(repo), input, &cacheutil.CacheActionOpts{Delete: true, CacheType: cacheutil.CacheTypeExternal})
 	}
 	return err
 }
@@ -328,7 +331,7 @@ func LogDebugManifestCacheKeyFields(message string, reason string, revision stri
 }
 
 func (c *Cache) GetManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace string, trackingMethod string, appLabelKey string, appName string, res *CachedManifestResponse, refSourceCommitSHAs ResolvedRevisions) error {
-	err := c.cache.GetItem(manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs), res, nil)
+	err := c.cache.GetItem(manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs), res, &cacheutil.CacheActionOpts{CacheType: cacheutil.CacheTypeExternal})
 
 	if err != nil {
 		return err
@@ -376,14 +379,15 @@ func (c *Cache) SetManifests(revision string, appSrc *appv1.ApplicationSource, s
 		res,
 		&cacheutil.CacheActionOpts{
 			Expiration: c.repoCacheExpiration,
-			Delete:     res == nil})
+			Delete:     res == nil,
+			CacheType:  cacheutil.CacheTypeExternal})
 }
 
 func (c *Cache) DeleteManifests(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, clusterInfo ClusterRuntimeInfo, namespace, trackingMethod, appLabelKey, appName string, refSourceCommitSHAs ResolvedRevisions) error {
 	return c.cache.SetItem(
 		manifestCacheKey(revision, appSrc, srcRefs, namespace, trackingMethod, appLabelKey, appName, clusterInfo, refSourceCommitSHAs),
 		"",
-		&cacheutil.CacheActionOpts{Delete: true})
+		&cacheutil.CacheActionOpts{Delete: true, CacheType: cacheutil.CacheTypeExternal})
 }
 
 func appDetailsCacheKey(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, trackingMethod appv1.TrackingMethod, refSourceCommitSHAs ResolvedRevisions) string {
@@ -394,7 +398,7 @@ func appDetailsCacheKey(revision string, appSrc *appv1.ApplicationSource, srcRef
 }
 
 func (c *Cache) GetAppDetails(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, res *apiclient.RepoAppDetailsResponse, trackingMethod appv1.TrackingMethod, refSourceCommitSHAs ResolvedRevisions) error {
-	return c.cache.GetItem(appDetailsCacheKey(revision, appSrc, srcRefs, trackingMethod, refSourceCommitSHAs), res, nil)
+	return c.cache.GetItem(appDetailsCacheKey(revision, appSrc, srcRefs, trackingMethod, refSourceCommitSHAs), res, &cacheutil.CacheActionOpts{CacheType: cacheutil.CacheTypeExternal})
 }
 
 func (c *Cache) SetAppDetails(revision string, appSrc *appv1.ApplicationSource, srcRefs appv1.RefTargetRevisionMapping, res *apiclient.RepoAppDetailsResponse, trackingMethod appv1.TrackingMethod, refSourceCommitSHAs ResolvedRevisions) error {
@@ -403,7 +407,8 @@ func (c *Cache) SetAppDetails(revision string, appSrc *appv1.ApplicationSource, 
 		res,
 		&cacheutil.CacheActionOpts{
 			Expiration: c.repoCacheExpiration,
-			Delete:     res == nil})
+			Delete:     res == nil,
+			CacheType:  cacheutil.CacheTypeExternal})
 }
 
 func revisionMetadataKey(repoURL, revision string) string {
@@ -446,12 +451,12 @@ func (c *Cache) SetGitFiles(repoURL, revision, pattern string, files map[string]
 	return c.cache.SetItem(
 		gitFilesKey(repoURL, revision, pattern),
 		&files,
-		&cacheutil.CacheActionOpts{Expiration: c.repoCacheExpiration})
+		&cacheutil.CacheActionOpts{Expiration: c.repoCacheExpiration, CacheType: cacheutil.CacheTypeExternal})
 }
 
 func (c *Cache) GetGitFiles(repoURL, revision, pattern string) (map[string][]byte, error) {
 	var item map[string][]byte
-	return item, c.cache.GetItem(gitFilesKey(repoURL, revision, pattern), &item, nil)
+	return item, c.cache.GetItem(gitFilesKey(repoURL, revision, pattern), &item, &cacheutil.CacheActionOpts{CacheType: cacheutil.CacheTypeExternal})
 }
 
 func gitDirectoriesKey(repoURL, revision string) string {

@@ -26,15 +26,15 @@ func (c *MockCacheClient) Set(item *cache.Item) error {
 	return c.BaseCache.Set(item)
 }
 
-func (c *MockCacheClient) Get(key string, obj interface{}) error {
-	args := c.Called(key, obj)
+func (c *MockCacheClient) Get(item *cache.Item) error {
+	args := c.Called(item)
 	if len(args) > 0 && args.Get(0) != nil {
 		return args.Get(0).(error)
 	}
 	if c.ReadDelay > 0 {
 		time.Sleep(c.ReadDelay)
 	}
-	return c.BaseCache.Get(key, obj)
+	return c.BaseCache.Get(item)
 }
 
 func (c *MockCacheClient) Delete(key string) error {

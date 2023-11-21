@@ -37,7 +37,7 @@ func AddCacheFlagsToCmd(cmd *cobra.Command, opts ...func(client *redis.Client)) 
 	cacheFactory := cacheutil.AddCacheFlagsToCmd(cmd, opts...)
 
 	return func() (*Cache, error) {
-		cache, err := cacheFactory()
+		cache, err := cacheFactory(false)
 		if err != nil {
 			return nil, err
 		}

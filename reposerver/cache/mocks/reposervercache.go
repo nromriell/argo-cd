@@ -21,6 +21,7 @@ const (
 type MockRepoCache struct {
 	mock.Mock
 	RedisClient       *cacheutilmocks.MockCacheClient
+	TwoLevelClient    *cacheutilmocks.MockCacheClient
 	StopRedisCallback func()
 }
 
@@ -35,17 +36,29 @@ type CacheCallCounts struct {
 	ExternalSets    int
 	ExternalGets    int
 	ExternalDeletes int
+	InMemorySets    int
+	InMemoryGets    int
+	InMemoryDeletes int
 }
 
 // Checks that the cache was called the expected number of times
 func (mockCache *MockRepoCache) AssertCacheCalledTimes(t *testing.T, calls *CacheCallCounts) {
+	totalSets := calls.ExternalSets + calls.InMemorySets
+	totalGets := calls.ExternalGets + calls.InMemoryGets
+	totalDeletes := calls.ExternalDeletes + calls.InMemoryDeletes
+	mockCache.TwoLevelClient.AssertNumberOfCalls(t, "Get", totalGets)
+	mockCache.TwoLevelClient.AssertNumberOfCalls(t, "Set", totalSets)
+	mockCache.TwoLevelClient.AssertNumberOfCalls(t, "Delete", totalDeletes)
 	mockCache.RedisClient.AssertNumberOfCalls(t, "Get", calls.ExternalGets)
 	mockCache.RedisClient.AssertNumberOfCalls(t, "Set", calls.ExternalSets)
 	mockCache.RedisClient.AssertNumberOfCalls(t, "Delete", calls.ExternalDeletes)
 }
 
 func (mockCache *MockRepoCache) ConfigureDefaultCallbacks() {
-	mockCache.RedisClient.On("Get", mock.Anything, mock.Anything).Return(nil)
+	mockCache.TwoLevelClient.On("Get", mock.Anything).Return(nil)
+	mockCache.TwoLevelClient.On("Set", mock.Anything).Return(nil)
+	mockCache.TwoLevelClient.On("Delete", mock.Anything).Return(nil)
+	mockCache.RedisClient.On("Get", mock.Anything).Return(nil)
 	mockCache.RedisClient.On("Set", mock.Anything).Return(nil)
 	mockCache.RedisClient.On("Delete", mock.Anything).Return(nil)
 }
@@ -65,7 +78,11 @@ func NewMockRepoCache(cacheOpts *MockCacheOptions) *MockRepoCache {
 		ReadDelay:  cacheOpts.ReadDelay,
 		WriteDelay: cacheOpts.WriteDelay,
 		BaseCache:  cacheutil.NewRedisCache(redisClient, cacheOpts.RepoCacheExpiration, cacheutil.RedisCompressionNone)}
-	newMockCache := &MockRepoCache{RedisClient: redisCacheClient, StopRedisCallback: stopRedis}
+	twoLevelClient := &cacheutilmocks.MockCacheClient{
+		ReadDelay:  cacheOpts.ReadDelay,
+		WriteDelay: cacheOpts.WriteDelay,
+		BaseCache:  cacheutil.NewTwoLevelClient(redisCacheClient, cacheOpts.RepoCacheExpiration)}
+	newMockCache := &MockRepoCache{TwoLevelClient: twoLevelClient, RedisClient: redisCacheClient, StopRedisCallback: stopRedis}
 	newMockCache.ConfigureDefaultCallbacks()
 	return newMockCache
 }
