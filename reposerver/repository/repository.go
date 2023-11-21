@@ -507,6 +507,17 @@ func resolveReferencedSources(hasMultipleSources bool, source *v1alpha1.Applicat
 func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestRequest) (*apiclient.ManifestResponse, error) {
 	var res *apiclient.ManifestResponse
 	var err error
+
+	settings := operationSettings{sem: s.parallelismLimitSemaphore, noCache: q.NoCache, noRevisionCache: q.NoRevisionCache, allowConcurrent: q.ApplicationSource.AllowsConcurrentProcessing()}
+	// Skip this path for ref only sources
+	if q.HasMultipleSources && q.ApplicationSource.Path == "" && q.ApplicationSource.Chart == "" && q.ApplicationSource.Ref != "" {
+		_, revision, err := s.newClientResolveRevision(q.Repo, q.Revision, git.WithCache(s.cache, !settings.noRevisionCache && !settings.noCache))
+		res = &apiclient.ManifestResponse{
+			Revision: revision,
+		}
+		return res, err
+	}
+
 	cacheFn := func(cacheKey string, refSourceCommitSHAs cache.ResolvedRevisions, firstInvocation bool) (bool, error) {
 		ok, resp, err := s.getManifestCacheEntry(cacheKey, q, refSourceCommitSHAs, firstInvocation)
 		res = resp
@@ -545,7 +556,6 @@ func (s *Service) GenerateManifest(ctx context.Context, q *apiclient.ManifestReq
 		return nil
 	}
 
-	settings := operationSettings{sem: s.parallelismLimitSemaphore, noCache: q.NoCache, noRevisionCache: q.NoRevisionCache, allowConcurrent: q.ApplicationSource.AllowsConcurrentProcessing()}
 	err = s.runRepoOperation(ctx, q.Revision, q.Repo, q.ApplicationSource, q.VerifySignature, cacheFn, operation, settings, q.HasMultipleSources, q.RefSources)
 
 	// if the tarDoneCh message is sent it means that the manifest
